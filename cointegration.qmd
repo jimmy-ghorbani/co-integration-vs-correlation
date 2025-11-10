@@ -1,0 +1,166 @@
+---
+author: "Jamshid Ghorbani"
+title: "co-integration vs correlation"
+date: 10/07/2025
+date-format: "MMM D, YYYY"
+format: pdf
+number-sections: true
+---
+
+
+
+Cointegration refers to a property by which two (or more) assets, while not being mean reverting individually, may be mean reverting with respect to each other. This commonly happens when the series themselves contain stochastic trends (i.e., they are nonstationary) but nevertheless they move closely together over time in a way that their difference remains stable (i.e., stationary). Thus, the concept of cointegration mimics the existence of a long-run equilibrium to which an economic system converges over time.
+
+The intuitive idea is that, while it may be difficult or impossible to predict individual assets, it may be easier to predict their relative behavior.
+Mathematically, a multivariate time series $y_1$,$y_2$,$y_3$,..., is cointegrated if some linear combination becomes integrated of lower order, for example, if $y_t$ is not stationary but the linear combination $\omega^Ty_t$ is stationary for some weights $\omega$. suppose the multivariate time series $y_t$ denotes the log-prices of some stocks. Such a time series is nonstationary (random walk), by taking a linear combination  $\omega^Ty_t$ we might be able to obtain a stationary time series. As covered later, this property has remarkable consequences in terms of trading and it forms the basics of pairs trading.
+
+A simple and common way to model cointegration of two time series is as
+$$y_{1t} = \gamma x_t + \omega_{1t}$$
+$$y_{2t} = x_t + \omega_{2t}$$
+where $x_t$ is a stochastic common trend defined as a random walk,
+$x_t = x_{t-1} + \omega_t$ 
+
+and the terms $\omega_1t$ , $\omega_2t$, $\omega_t$,are i.i.d. residual terms, mutually independent, with variances $\sigma^2_1$,$\sigma^2_2$ and $\sigma^2$ ,respectively. The coefficient $\gamma$ is the key quantity that determines the cointegration relationship. It is important to note that each of the time series, $y_1$, $y_2$, is a random walk plus additional noise, therefore nonstationary. However, since they share a common stochastic trend, a simple linear combination of the two can eliminate this trend. The so-called spread is precisely this linear combination without the trend:
+$$
+z_t = y_{1t} - \gamma y_{2t} = \omega_1t - \gamma\omega_{2t}
+$$
+which is stationary and mean reverting.
+```{python}
+#| echo: false
+import numpy as np
+import pandas as pd
+import yfinance as yf
+from statsmodels.regression.rolling import RollingOLS
+from statsmodels.tsa.stattools import grangercausalitytests
+from arch.unitroot import ADF, PhillipsPerron, KPSS
+from sklearn.metrics import confusion_matrix
+import statsmodels.api as sm
+import matplotlib.pyplot as plt
+import warnings
+warnings.simplefilter(action="ignore", category=UserWarning)  # ignoring warnings of type UserWarning
+```
+
+
+Correlation is a basic concept in probability that refers to how “related” two random variables are. We can use this measure for stationary time series but definitely not with nonstationary time series. In fact, when we refer to correlation between two financial assets, we are actually employing this concept on the returns of the assets and not the price values.
+the concepts of correlation and cointegration have been introduced, but their similarity and difference may be unclear and confusing. After all, it seems that they both try to capture the concept of similarity of movements of two time series, so superficially they may seem to be similar concepts. However, they are totally different right from their definition.
+As a matter of fact, the correlation of the differences of the two cointegrated time series in the model can be analytically derived as
+$$
+\rho = \frac{1}{\sqrt{1 + 2\frac{\sigma_1^2}{\sigma^2}} \, \sqrt{1 + 2\frac{\sigma_2^2}{\sigma^2}}}
+$$
+
+which can be made as small as desired by properly choosing the variances of the residual terms. That is, we can have two perfectly cointegrated time series with an arbitrarily small correlation, which may be surprising at first. This reveals that cointegration and correlation are two totally different concepts, yet they both attempt to measure the similarity of the movements of two time series. The following examples illustrate this difference.
+
+
+```{python}
+#| echo: false
+#| warning: false
+#| message: false
+
+# Download stock data (already a DataFrame)
+data1 = pd.DataFrame(yf.download('GM','2024-06-01','2025-09-25'))
+data2 = pd.DataFrame(yf.download('AAPL','2024-06-01','2025-09-25'))
+data1['log_returns'] = np.log(data1['Close']/data1['Close'].shift(1))
+data2['log_returns'] = np.log(data2['Close']/data2['Close'].shift(1))
+
+data1 = data1.dropna()
+data2 = data2.dropna()
+# Extract closing prices
+y1 = data1['Close']
+y2 = data2['Close']
+
+
+# Compute correlation of log returns
+corr_levels = np.round(data1['log_returns'].corr(data2['log_returns']), 2)
+
+```
+
+```{python}
+#| echo: false
+#| warning: false
+#| message: false
+# Normalize
+y1_norm = y1 / y1.iloc[0]
+y2_norm = y2 / y2.iloc[0]
+
+# Spread
+spread = y1_norm - y2_norm
+
+# Differences
+dy1 = y1_norm.diff().dropna()
+dy2 = y2_norm.diff().dropna()
+
+# Create side-by-side plots
+fig, axes = plt.subplots(1, 2, figsize=(14,5))
+
+# ---- Left plot: normalized series + spread ----
+axes[0].plot(y1_norm, label='y1_norm')
+axes[0].plot(y2_norm, label='y2_norm')
+axes[0].plot(spread, label='Spread (y1_norm - y2_norm)', linestyle='--', color='black')
+axes[0].set_title('Normalized series and spread')
+axes[0].legend()
+axes[0].grid(True)
+axes[0].tick_params(axis='x', rotation=45)
+
+# ---- Right plot: scatter of differences ----
+axes[1].scatter(dy1, dy2, alpha=0.6)
+axes[1].set_title('Scatter plot of Δy1_norm vs Δy2_norm')
+axes[1].set_xlabel('Δy1_norm')
+axes[1].set_ylabel('Δy2_norm')
+axes[1].grid(True)
+
+plt.tight_layout()
+plt.show()
+```
+
+so initially for the two time series we have a correlation of `{python} corr_levels`. for checking if they are cointegrated as well or not, we use ADF test.
+```{python}
+#| echo: false
+X_price = y1["GM"]
+y_price = y2["AAPL"]
+X_price = sm.add_constant(X_price)  # adding a constant term for intercept
+
+model_ols_price = sm.OLS(y_price, X_price).fit()
+#print(model_ols_price.summary())
+residuals = model_ols_price.resid
+# and test them for stationarity with the ADF test
+adf_test = ADF(residuals)
+# by default number of lags is selected automatically based on AIC
+# WHICH is not correct as it does not take into account potential autocorrelation
+# and trend = 'c' (constant/drift) is used
+```
+```{python}
+#| echo: false
+print(adf_test.summary().as_text())
+```
+
+The plot and the test results show the time series evolution of the variable, highlighting its general trend and short-term fluctuations. The analysis of the two time series reveals a modest short-term correlation of 0.26, suggesting that while the series tend to move in the same general direction, their daily co-movements are relatively weak. However, the Augmented Dickey–Fuller (ADF) test on the series yields a test statistic of –3.200 with a p-value of 0.020, which allows us to reject the null hypothesis of a unit root at the 5% significance level. This indicates that the series is stationary, implying the presence of a long-run equilibrium relationship. Therefore, despite the modest correlation, the results confirm that the series are co-integrated, making them suitable candidates for mean-reversion or pairs trading strategies.</br>
+
+
+The issue with the Engle-Granger test is that it only measures cointegration between two time series. However, tests such as the Johansen test are used to determine cointegration between several time series.
+
+# Johansen Test
+The Johansen test is used to test cointegrating relationships between several non-stationary time series data. Compared to the Engle-Granger test, the Johansen test allows for more than one cointegrating relationship. However, it is subject to asymptotic properties (large sample size) since a small sample size would produce unreliable results. Using the test to find cointegration of several time series avoids the issues created when errors are carried forward to the next step.
+
+Johansen’s test comes in two main forms, i.e., Trace tests and Maximum Eigenvalue test.
+
+Trace tests
+Trace tests evaluate the number of linear combinations in a time series data, i.e., $K$ to be equal to the value $K_0$, and the hypothesis for the value $K$ to be greater than $K_0$. It is illustrated as follows:
+$$
+H_0: K = K_0
+$$
+$$
+H_0: K > K_0
+$$                                       
+
+When using the trace test to test for cointegration in a sample, we set $K_0$ to zero to test whether the null hypothesis will be rejected. If it is rejected, we can deduce that there exists a cointegration relationship in the sample. Therefore, the null hypothesis should be rejected to confirm the existence of a cointegration relationship in the sample.
+
+# Maximum Eigenvalue test </br>
+An Eigenvalue is defined as a non-zero vector which, when a linear transformation is applied to it, changes by a scalar factor. The Maximum Eigenvalue test is similar to the Johansen’s trace test. The key difference between the two is the null hypothesis.
+$$
+H_0: K = K_0
+$$
+$$
+H_0: K = K_0 + 1
+$$
+
+In a scenario where $K=K_0$ and the null hypothesis is rejected, it means that there is only one possible outcome of the variable to produce a stationary process. However, in a scenario where $K_0 = m-1$ and the null hypothesis is rejected, it means that there are M possible linear combinations. Such a scenario is impossible unless the variables in the time series are stationary.
